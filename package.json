@@ -1,0 +1,15 @@
+{
+    "name": "node-api-extension-installer-docker",
+    "version": "0.1.0",
+    "description": "Node API providing a Roon extension installer via wrapped Docker commands",
+    "main": "docker-lib.js",
+    "author": "The Appgineer",
+    "license": "Apache-2.0",
+    "dependencies": {
+        "dockerode": "^2.5.7"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/TheAppgineer/node-api-extension-installer-docker.git"
+    }
+}
