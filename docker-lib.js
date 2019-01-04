@@ -79,6 +79,8 @@ ApiExtensionInstallerDocker.prototype.install = function(image, cb) {
         const repo_tag_string = image.repo + ':' + image.tags[docker_version.Arch];
 
         _install(repo_tag_string, image.config, cb);
+    } else {
+        cb && cb('No image available for "' + docker_version.Arch + '" architecture');
     }
 }
 
