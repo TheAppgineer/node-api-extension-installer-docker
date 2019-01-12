@@ -74,11 +74,54 @@ ApiExtensionInstallerDocker.prototype.get_name = function(image) {
     return _split(image.repo).repo;
 }
 
-ApiExtensionInstallerDocker.prototype.install = function(image, cb) {
+ApiExtensionInstallerDocker.prototype.get_install_options = function(image) {
+
+    return (image && image.options ? image.options : undefined);
+}
+
+ApiExtensionInstallerDocker.prototype.install = function(image, binds_path, options, cb) {
     if (docker_version && image && image.tags[docker_version.Arch]) {
         const repo_tag_string = image.repo + ':' + image.tags[docker_version.Arch];
 
-        _install(repo_tag_string, image.config, cb);
+        // Process options
+        if (options) {
+            if (options.env) {
+                if (!image.config.Env) {
+                    image.config.Env = [];
+                }
+
+                for (const name in options.env) {
+                    image.config.Env.push(name + '=' + options.env[name]);
+                }
+            }
+        }
+
+        // Process binds
+        if (image.binds && binds_path) {
+            const count = image.binds.length;
+            
+            if (!image.config.Volumes) {
+                image.config.Volumes = {};
+            }
+            if (!image.config.HostConfig) {
+                image.config.HostConfig = {};
+            }
+            if (!image.config.HostConfig.Binds) {
+                image.config.HostConfig.Binds = [];
+            }
+
+            // Check for count and an absolute path
+            if (count && image.binds[count - 1].indexOf('/') === 0) {
+                _create_bind_path_and_file(image.config, binds_path, image.binds, count - 1, (err) => {
+                    if (err) {
+                        cb && cb(err);
+                    } else {
+                        console.log(image.config);
+                        _install(repo_tag_string, image.config, cb);
+                    }
+                });
+            }
+        }
     } else {
         cb && cb('No image available for "' + docker_version.Arch + '" architecture');
     }
@@ -182,6 +225,51 @@ ApiExtensionInstallerDocker.prototype.terminate = function(name, cb) {
     });
 }
 
+function _create_bind_path_and_file(config, binds_path, binds, count, cb) {
+    const mkdirp = require('mkdirp');
+    const fs = require('fs');
+    const full_path = binds_path + binds[count].substring(0, binds[count].lastIndexOf('/'));
+    const full_name = binds_path + binds[count];
+
+    // Create binds directory
+    mkdirp(full_path, (err, made) => {
+        if (err) {
+            cb && cb(err);
+        } else {
+            config.Volumes[binds[count]] = {};
+            config.HostConfig.Binds.push(full_name + ':' + binds[count]);
+            
+            // Check if file already exists
+            fs.open(full_name, 'r', (err, fd) => {
+                if (err) {
+                    if (err.code == 'ENOENT') {
+                        // Create empty file
+                        fs.writeFile(full_name, '', (err) => {
+                            if (err) {
+                                cb && cb(err);
+                            } else if (count) {
+                                _create_bind_path_and_file(config, binds_path, binds, count - 1, cb);
+                            } else {
+                                cb && cb();
+                            }
+                        });
+                    } else {
+                        cb && cb(err);
+                    }
+                } else {
+                    fs.close(fd, (err) => {
+                        if (count) {
+                            _create_bind_path_and_file(config, binds_path, binds, count - 1, cb);
+                        } else {
+                            cb && cb();
+                        }
+                    });                    
+                }
+            });
+        }
+    });
+}
+
 function _install(repo_tag_string, config, cb) {
     docker.pull(repo_tag_string, (err, stream) => {
         if (err) {
@@ -217,15 +305,18 @@ function _query_installs(cb, name) {
             cb && cb(err);
         } else {
             let tag;
+            let installs = {};
 
             images.forEach((image_info) => {
                 image_info.RepoTags.forEach((repo_tag) => {
                     const fields = _split(repo_tag);
 
                     tag = fields.tag;
-                    installed[fields.repo] = tag;
+                    installs[fields.repo] = tag;
                 });
             });
+            
+            installed = installs;
 
             _get_containers((err, containers) => {
                 containers.forEach((container) => {
