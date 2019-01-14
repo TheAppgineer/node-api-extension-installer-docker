@@ -94,6 +94,16 @@ ApiExtensionInstallerDocker.prototype.install = function(image, binds_path, opti
                     image.config.Env.push(name + '=' + options.env[name]);
                 }
             }
+            
+            if (options.devices) {
+                if (!image.config.Devices) {
+                    image.config.Devices = [];
+                }
+
+                for (let i = 0; i < options.devices.length; i++) {
+                    image.config.Devices.push(options.devices[i]);
+                }
+            }
         }
 
         // Process binds
