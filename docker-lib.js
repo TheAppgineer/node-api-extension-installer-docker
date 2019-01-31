@@ -79,7 +79,7 @@ ApiExtensionInstallerDocker.prototype.get_install_options = function(image) {
     return (image && image.options ? image.options : undefined);
 }
 
-ApiExtensionInstallerDocker.prototype.install = function(image, binds_path, options, cb) {
+ApiExtensionInstallerDocker.prototype.install = function(image, bind_props, options, cb) {
     if (docker_version && image && image.tags[docker_version.Arch]) {
         const repo_tag_string = image.repo + ':' + image.tags[docker_version.Arch];
 
@@ -107,9 +107,7 @@ ApiExtensionInstallerDocker.prototype.install = function(image, binds_path, opti
         }
 
         // Process binds
-        if (image.binds && binds_path) {
-            const count = image.binds.length;
-            
+        if (image.binds && bind_props) {
             if (!image.config.Volumes) {
                 image.config.Volumes = {};
             }
@@ -119,18 +117,28 @@ ApiExtensionInstallerDocker.prototype.install = function(image, binds_path, opti
             if (!image.config.HostConfig.Binds) {
                 image.config.HostConfig.Binds = [];
             }
-
-            // Check for count and an absolute path
-            if (count && image.binds[count - 1].indexOf('/') === 0) {
-                _create_bind_path_and_file(image.config, binds_path, image.binds, count - 1, (err) => {
-                    if (err) {
-                        cb && cb(err);
-                    } else {
-                        console.log(image.config);
-                        _install(repo_tag_string, image.config, cb);
-                    }
-                });
-            }
+            
+            _get_volume(bind_props.name, bind_props.root, (volume) => {
+                const count = image.binds.length;
+            
+                bind_props.volume = volume;
+                        
+                // Check for count
+                if (count) {
+                    _create_bind_path_and_file(image.config, bind_props, image.binds, count - 1, (err) => {
+                        if (err) {
+                            cb && cb(err);
+                        } else {
+                            if (volume && image.config.HostConfig.Binds.length) {
+                                image.config.Volumes[bind_props.root] = {};
+                                image.config.HostConfig.Binds.push(volume.name + ':' + bind_props.root + ':ro');
+                            }
+                
+                            _install(repo_tag_string, image.config, cb);
+                        }
+                    });
+                }
+            });
         }
     } else {
         cb && cb('No image available for "' + docker_version.Arch + '" architecture');
@@ -235,52 +243,87 @@ ApiExtensionInstallerDocker.prototype.terminate = function(name, cb) {
     });
 }
 
-function _create_bind_path_and_file(config, binds_path, binds, count, cb) {
-    const mkdirp = require('mkdirp');
-    const fs = require('fs');
-    const full_path = binds_path + binds[count].substring(0, binds[count].lastIndexOf('/'));
-    const full_name = binds_path + binds[count];
+function _get_volume(name, destination, cb) {
+    const container = docker.getContainer(name);
 
-    // Create binds directory
-    mkdirp(full_path, (err, made) => {
-        if (err) {
-            cb && cb(err);
-        } else {
-            config.Volumes[binds[count]] = {};
-            config.HostConfig.Binds.push(full_name + ':' + binds[count]);
-            
-            // Check if file already exists
-            fs.open(full_name, 'r', (err, fd) => {
-                if (err) {
-                    if (err.code == 'ENOENT') {
-                        // Create empty file
-                        fs.writeFile(full_name, '', (err) => {
-                            if (err) {
-                                cb && cb(err);
-                            } else if (count) {
-                                _create_bind_path_and_file(config, binds_path, binds, count - 1, cb);
-                            } else {
-                                cb && cb();
-                            }
-                        });
-                    } else {
-                        cb && cb(err);
-                    }
-                } else {
-                    fs.close(fd, (err) => {
-                        if (count) {
-                            _create_bind_path_and_file(config, binds_path, binds, count - 1, cb);
-                        } else {
-                            cb && cb();
-                        }
-                    });                    
+    container.inspect((err, info) => {
+        let volume;
+        
+        if (info && info.Mounts) {
+            for (let i = 0; i < info.Mounts.length; i++) {
+                if (destination.includes(info.Mounts[i].Destination)) {
+                    volume = {
+                        source: info.Mounts[i].Source + '/',
+                        name:   info.Mounts[i].Name
+                    };
+                    break;
                 }
-            });
+            }
         }
+
+        cb && cb(volume);
     });
 }
 
+function _create_bind_path_and_file(config, bind_props, binds, count, cb) {
+    // Check for an absolute path
+    if (binds[count].indexOf('/') === 0) {
+        const mkdirp = require('mkdirp');
+        const fs = require('fs');
+        const binds_path = bind_props.root + bind_props.binds_path;
+        const full_path = binds_path + binds[count].substring(0, binds[count].lastIndexOf('/'));
+        const full_name = binds_path + binds[count];
+        const full_volume_name = (bind_props.volume ?
+                                  bind_props.volume.source + bind_props.binds_path + binds[count] :
+                                  full_name);
+
+        // Create binds directory
+        mkdirp(full_path, (err, made) => {
+            if (err) {
+                cb && cb(err);
+            } else {
+                config.Volumes[binds[count]] = {};
+                config.HostConfig.Binds.push(full_volume_name + ':' + binds[count]);
+                
+                // Check if file already exists
+                fs.open(full_name, 'r', (err, fd) => {
+                    if (err) {
+                        if (err.code == 'ENOENT') {
+                            // Create empty file
+                            fs.writeFile(full_name, '', (err) => {
+                                if (err) {
+                                    cb && cb(err);
+                                } else if (count) {
+                                    _create_bind_path_and_file(config, bind_props, binds, count - 1, cb);
+                                } else {
+                                    cb && cb();
+                                }
+                            });
+                        } else {
+                            cb && cb(err);
+                        }
+                    } else {
+                        fs.close(fd, (err) => {
+                            if (count) {
+                                _create_bind_path_and_file(config, bind_props, binds, count - 1, cb);
+                            } else {
+                                cb && cb();
+                            }
+                        });                    
+                    }
+                });
+            }
+        });
+    } else if (count) {
+        _create_bind_path_and_file(config, bind_props, binds, count - 1, cb);
+    } else {
+        cb && cb();
+    }
+}
+
 function _install(repo_tag_string, config, cb) {
+    console.log(config);
+
     docker.pull(repo_tag_string, (err, stream) => {
         if (err) {
             cb && cb(err);
