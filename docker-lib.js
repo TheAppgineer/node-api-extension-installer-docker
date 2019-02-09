@@ -98,12 +98,20 @@ ApiExtensionInstallerDocker.prototype.install = function(image, bind_props, opti
             }
             
             if (options.devices) {
-                if (!image.config.Devices) {
-                    image.config.Devices = [];
+                if (!image.config.HostConfig) {
+                    image.config.HostConfig = {};
                 }
 
-                for (let i = 0; i < options.devices.length; i++) {
-                    image.config.Devices.push(options.devices[i]);
+                if (!image.config.HostConfig.Devices) {
+                    image.config.HostConfig.Devices = [];
+                }
+
+                for (const index in options.devices) {
+                    image.config.HostConfig.Devices.push({
+                        PathOnHost:        options.devices[index],
+                        PathInContainer:   options.devices[index],
+                        CgroupPermissions: 'rwm'
+                    });
                 }
             }
         }
@@ -387,9 +395,17 @@ function _query_installs(cb, image_name) {
                         });
                     });
         
-                    installed = installs;
+                    if (image_name) {
+                        const name = Object.keys(installs);
+                        
+                        installed[name] = installs[name];
 
-                    cb && cb(err, (image_name ? _split(image_name).tag : installed));
+                        cb && cb(err, installs[name]);
+                    } else {
+                        installed = installs;
+
+                        cb && cb(err, installed);
+                    }
                 }
             }, image_name ? _split(image_name).repo : undefined);
         }
