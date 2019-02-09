@@ -43,15 +43,16 @@ function ApiExtensionInstallerDocker(cb) {
 
 ApiExtensionInstallerDocker.prototype.get_status = function(name) {
     let version;
+    let tag;
     let state;
 
     if (name) {
-        version = installed[name];
+        tag = installed[name];
     } else if (docker_version) {
         version = docker_version.Version;
     }
 
-    state = (version ? 'installed' : 'not_installed');
+    state = (tag ? 'installed' : 'not_installed');
 
     if (state == 'installed') {
         // Get container state
@@ -66,6 +67,7 @@ ApiExtensionInstallerDocker.prototype.get_status = function(name) {
     return {
         state:   state,
         version: version,
+        tag:     tag,
         logging: undefined
     };
 }
@@ -134,6 +136,8 @@ ApiExtensionInstallerDocker.prototype.install = function(image, bind_props, opti
                                 image.config.HostConfig.Binds.push(volume.name + ':' + bind_props.root + ':ro');
                             }
                 
+                            console.log(image.config);
+
                             _install(repo_tag_string, image.config, cb);
                         }
                     });
@@ -234,13 +238,17 @@ ApiExtensionInstallerDocker.prototype.stop = function(name, cb) {
 }
 
 ApiExtensionInstallerDocker.prototype.terminate = function(name, cb) {
-    ApiExtensionInstallerDocker.prototype.stop.call(this, name, () => {
-        if (states[name] == 'exited') {
-            states[name] = 'terminated';
-        }
+    if (states[name] == 'running') {
+        ApiExtensionInstallerDocker.prototype.stop.call(this, name, () => {
+            if (states[name] == 'exited') {
+                states[name] = 'terminated';
+            }
 
+            cb && cb();
+        });
+    } else {
         cb && cb();
-    });
+    }
 }
 
 function _get_volume(name, destination, cb) {
@@ -322,8 +330,6 @@ function _create_bind_path_and_file(config, bind_props, binds, count, cb) {
 }
 
 function _install(repo_tag_string, config, cb) {
-    console.log(config);
-
     docker.pull(repo_tag_string, (err, stream) => {
         if (err) {
             cb && cb(err);
@@ -344,12 +350,12 @@ function _install(repo_tag_string, config, cb) {
     });
 }
 
-function _query_installs(cb, name) {
+function _query_installs(cb, image_name) {
     let options;
 
-    if (name) {
+    if (image_name) {
         options = {
-            filters: { reference: [name] }
+            filters: { reference: [image_name] }
         };
     }
 
@@ -357,33 +363,35 @@ function _query_installs(cb, name) {
         if (err) {
             cb && cb(err);
         } else {
-            let tag;
-            let installs = {};
-
-            images.forEach((image_info) => {
-                image_info.RepoTags.forEach((repo_tag) => {
-                    const fields = _split(repo_tag);
-
-                    tag = fields.tag;
-                    installs[fields.repo] = tag;
-                });
-            });
-            
-            installed = installs;
-
             _get_containers((err, containers) => {
-                containers.forEach((container) => {
-                    if (name) {
-                        if (states[name] != 'terminated') {
-                            states[name] = container.State.toLowerCase();
-                        }
-                    } else {
-                        states[container.Names[0].replace('/', '')] = container.State.toLowerCase();
-                    }
-                });
+                if (err) {
+                    cb && cb(err);
+                } else {
+                    let installs = {};
 
-                cb && cb(err, (name ? tag : installed));
-            }, name);
+                    images.forEach((image_info) => {
+                        image_info.RepoTags.forEach((repo_tag) => {
+                            const fields = _split(repo_tag);
+                            const name = fields.repo;        
+                            const tag = fields.tag;
+
+                            containers.forEach((container) => {
+                                if (container.Names[0].replace('/', '') == name) {
+                                    installs[name] = tag;
+
+                                    if (states[name] != 'terminated') {
+                                        states[name] = container.State.toLowerCase();
+                                    }                        
+                                }
+                            });
+                        });
+                    });
+        
+                    installed = installs;
+
+                    cb && cb(err, (image_name ? _split(image_name).tag : installed));
+                }
+            }, image_name ? _split(image_name).repo : undefined);
         }
     });
 }
