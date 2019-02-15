@@ -179,14 +179,8 @@ ApiExtensionInstallerDocker.prototype.update = function(name, cb) {
             const image_name = info.Config.Image;
             let config = info.Config;
             config.HostConfig = info.HostConfig;
-
-            container.remove((err) => {
-                if (err) {
-                    cb && cb(err);
-                } else {
-                    _install(image_name, config, cb);
-                }
-            });
+            
+            _install(image_name, config, cb);
         } else {
             cb && cb(err);
         }
@@ -226,6 +220,7 @@ ApiExtensionInstallerDocker.prototype.start = function(name) {
         container.inspect((err, info) => {
             if (info) {
                 states[name] = info.State.Status;
+                container.update({ RestartPolicy: { Name: "unless-stopped", MaximumRetryCount: 0 } });
             }
         });
     });
@@ -343,84 +338,89 @@ function _install(repo_tag_string, config, cb) {
             cb && cb(err);
         } else {
             docker.modem.followProgress(stream, /* onFinished */ (err, output) => {
-                config.name  = _split(repo_tag_string).repo;
-                config.Image = repo_tag_string;
+                const final_status = output[output.length - 1].status;
 
-                docker.createContainer(config, (err, container) => {
-                    if (err) {
-                        cb && cb(err);
+                if (final_status.includes('Status: Image is up to date')) {
+                    console.log(final_status);
+                    _query_installs(cb, repo_tag_string);
+                } else {
+                    const name = _split(repo_tag_string).repo;
+                    const container = docker.getContainer(name);
+
+                    config.name  = name;
+                    config.Image = repo_tag_string;
+
+                    if (container) {
+                        container.remove((err) => {
+                            if (err) {
+                                cb && cb(err);
+                            } else {
+                                _create_container(config, cb);
+                            }
+                        });
                     } else {
-                        _query_installs(cb, repo_tag_string);
+                        _create_container(config, cb);
                     }
-                });
+                }
             });
         }
     });
 }
 
-function _query_installs(cb, image_name) {
-    let options;
+function _create_container(config, cb) {
+    // Container is created with restart policy off, this will be changed after the first start of the container
+    // This prevents that the created container is started after a restart of the Docker daemon
+    config.HostConfig.RestartPolicy.Name = "";
+    config.HostConfig.RestartPolicy.MaximumRetryCount = 0;
+    
+    // Other forced settings
+    config.HostConfig.NetworkMode = "host";
 
-    if (image_name) {
-        options = {
-            filters: { reference: [image_name] }
-        };
-    }
-
-    docker.listImages(options, (err, images) => {
+    docker.createContainer(config, (err) => {
         if (err) {
             cb && cb(err);
         } else {
-            _get_containers((err, containers) => {
-                if (err) {
-                    cb && cb(err);
-                } else {
-                    let installs = {};
-
-                    images.forEach((image_info) => {
-                        image_info.RepoTags.forEach((repo_tag) => {
-                            const fields = _split(repo_tag);
-                            const name = fields.repo;        
-                            const tag = fields.tag;
-
-                            containers.forEach((container) => {
-                                if (container.Names[0].replace('/', '') == name) {
-                                    installs[name] = tag;
-
-                                    if (states[name] != 'terminated') {
-                                        states[name] = container.State.toLowerCase();
-                                    }                        
-                                }
-                            });
-                        });
-                    });
-        
-                    if (image_name) {
-                        const name = Object.keys(installs);
-                        
-                        installed[name] = installs[name];
-
-                        cb && cb(err, installs[name]);
-                    } else {
-                        installed = installs;
-
-                        cb && cb(err, installed);
-                    }
-                }
-            }, image_name ? _split(image_name).repo : undefined);
+            _query_installs(cb, config.Image);
         }
     });
 }
 
-function _get_containers(cb, name) {
+function _query_installs(cb, image_name) {
+    const repo = (image_name ? _split(image_name).repo : undefined);
     let options = { all: true };
 
-    if (name) {
-        options.filters = { name: [name] };
+    if (repo) {
+        options.filters = { name: [repo] };
     }
 
     docker.listContainers(options, (err, containers) => {
-        cb && cb(err, containers);
+        if (err) {
+            cb && cb(err);
+        } else {
+            let installs = {};
+
+            containers.forEach((container) => {
+                const name = container.Names[0].replace('/', '');
+
+                installs[name] = _split(container.Image).tag;
+
+                if (states[name] != 'terminated') {
+                    states[name] = container.State.toLowerCase();
+                }
+            });
+
+            if (image_name) {
+                const name = Object.keys(installs);
+                
+                installed[name] = installs[name];
+
+                cb && cb(err, installs[name]);
+            } else {
+                installed = installs;
+
+                cb && cb(err, installed);
+            }
+        }
     });
 }
 
