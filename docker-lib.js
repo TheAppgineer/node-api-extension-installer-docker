@@ -85,6 +85,10 @@ ApiExtensionInstallerDocker.prototype.install = function(image, bind_props, opti
     if (docker_version && image && image.tags[docker_version.Arch]) {
         const repo_tag_string = image.repo + ':' + image.tags[docker_version.Arch];
 
+        if (!image.config) {
+            image.config = {};
+        }
+
         // Process options
         if (options) {
             if (options.env) {
@@ -117,7 +121,7 @@ ApiExtensionInstallerDocker.prototype.install = function(image, bind_props, opti
         }
 
         // Process binds
-        if (image.binds && bind_props) {
+        if (image.binds && image.binds.length && bind_props) {
             if (!image.config.Volumes) {
                 image.config.Volumes = {};
             }
@@ -129,28 +133,23 @@ ApiExtensionInstallerDocker.prototype.install = function(image, bind_props, opti
             }
             
             _get_volume(bind_props.name, bind_props.root, (volume) => {
-                const count = image.binds.length;
-            
                 bind_props.volume = volume;
                         
-                // Check for count
-                if (count) {
-                    _create_bind_path_and_file(image.config, bind_props, image.binds, count - 1, (err) => {
-                        if (err) {
-                            cb && cb(err);
-                        } else {
-                            if (volume && image.config.HostConfig.Binds.length) {
-                                image.config.Volumes[bind_props.root] = {};
-                                image.config.HostConfig.Binds.push(volume.name + ':' + bind_props.root + ':ro');
-                            }
-                
-                            console.log(image.config);
-
-                            _install(repo_tag_string, image.config, cb);
+                _create_bind_path_and_file(image.config, bind_props, image.binds, image.binds.length - 1, (err) => {
+                    if (err) {
+                        cb && cb(err);
+                    } else {
+                        if (volume && image.config.HostConfig.Binds.length) {
+                            image.config.Volumes[bind_props.root] = {};
+                            image.config.HostConfig.Binds.push(volume.name + ':' + bind_props.root + ':ro');
                         }
-                    });
-                }
+
+                        _install(repo_tag_string, image.config, cb);
+                    }
+                });
             });
+        } else {
+            _install(repo_tag_string, image.config, cb);
         }
     } else {
         cb && cb('No image available for "' + docker_version.Arch + '" architecture');
@@ -339,18 +338,18 @@ function _install(repo_tag_string, config, cb) {
         } else {
             docker.modem.followProgress(stream, /* onFinished */ (err, output) => {
                 const final_status = output[output.length - 1].status;
+                const name = _split(repo_tag_string).repo;
 
-                if (final_status.includes('Status: Image is up to date')) {
+                if (installed[name] && final_status.includes('Status: Image is up to date')) {
                     console.log(final_status);
                     _query_installs(cb, repo_tag_string);
                 } else {
-                    const name = _split(repo_tag_string).repo;
-                    const container = docker.getContainer(name);
-
                     config.name  = name;
                     config.Image = repo_tag_string;
 
-                    if (container) {
+                    if (installed[name]) {
+                        const container = docker.getContainer(name);
+
                         container.remove((err) => {
                             if (err) {
                                 cb && cb(err);
@@ -368,13 +367,21 @@ function _install(repo_tag_string, config, cb) {
 }
 
 function _create_container(config, cb) {
+    if (!config.HostConfig) {
+        config.HostConfig = {};
+    }
+    
     // Container is created with restart policy off, this will be changed after the first start of the container
     // This prevents that the created container is started after a restart of the Docker daemon
-    config.HostConfig.RestartPolicy.Name = "";
-    config.HostConfig.RestartPolicy.MaximumRetryCount = 0;
+    config.HostConfig.RestartPolicy = {
+        Name: "",
+        MaximumRetryCount: 0
+    }
     
     // Other forced settings
     config.HostConfig.NetworkMode = "host";
+
+    console.log(config);
 
     docker.createContainer(config, (err) => {
         if (err) {
