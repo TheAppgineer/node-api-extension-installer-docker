@@ -110,12 +110,28 @@ ApiExtensionInstallerDocker.prototype.install = function(image, bind_props, opti
                     image.config.HostConfig.Devices = [];
                 }
 
-                for (const index in options.devices) {
+                for (const host in options.devices) {
                     image.config.HostConfig.Devices.push({
-                        PathOnHost:        options.devices[index],
-                        PathInContainer:   options.devices[index],
+                        PathOnHost:        host,
+                        PathInContainer:   options.devices[host],
                         CgroupPermissions: 'rwm'
                     });
+                }
+            }
+            if (options.binds) {
+                if (!image.config.Volumes) {
+                    image.config.Volumes = {};
+                }
+                if (!image.config.HostConfig) {
+                    image.config.HostConfig = {};
+                }
+                if (!image.config.HostConfig.Binds) {
+                    image.config.HostConfig.Binds = [];
+                }
+
+                for (const host in options.binds) {
+                    image.config.Volumes[options.binds[host]] = {};
+                    image.config.HostConfig.Binds.push(host + ':' + options.binds[host]);
                 }
             }
         }
@@ -140,6 +156,7 @@ ApiExtensionInstallerDocker.prototype.install = function(image, bind_props, opti
                         cb && cb(err);
                     } else {
                         if (volume && image.config.HostConfig.Binds.length) {
+                            // Attach this container to the volume that holds the bind mount
                             image.config.Volumes[bind_props.root] = {};
                             image.config.HostConfig.Binds.push(volume.name + ':' + bind_props.root + ':ro');
                         }
