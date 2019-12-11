@@ -100,7 +100,7 @@ ApiExtensionInstallerDocker.prototype.install = function(image, bind_props, opti
                     image.config.Env.push(name + '=' + options.env[name]);
                 }
             }
-            
+
             if (options.devices) {
                 if (!image.config.HostConfig) {
                     image.config.HostConfig = {};
@@ -147,10 +147,10 @@ ApiExtensionInstallerDocker.prototype.install = function(image, bind_props, opti
             if (!image.config.HostConfig.Binds) {
                 image.config.HostConfig.Binds = [];
             }
-            
+
             _get_volume(bind_props.name, bind_props.root, (volume) => {
                 bind_props.volume = volume;
-                        
+
                 _create_bind_path_and_file(image.config, bind_props, image.binds, image.binds.length - 1, (err) => {
                     if (err) {
                         cb && cb(err);
@@ -195,7 +195,7 @@ ApiExtensionInstallerDocker.prototype.update = function(name, cb) {
             const image_name = info.Config.Image;
             let config = info.Config;
             config.HostConfig = info.HostConfig;
-            
+
             _install(image_name, config, cb);
         } else {
             cb && cb(err);
@@ -229,7 +229,7 @@ ApiExtensionInstallerDocker.prototype.uninstall = function(name, cb) {
     });
 }
 
-ApiExtensionInstallerDocker.prototype.start = function(name) {
+ApiExtensionInstallerDocker.prototype.start = function(name, fd) {
     const container = docker.getContainer(name);
 
     container.start((err) => {
@@ -237,6 +237,8 @@ ApiExtensionInstallerDocker.prototype.start = function(name) {
             if (info) {
                 states[name] = info.State.Status;
                 container.update({ RestartPolicy: { Name: "unless-stopped", MaximumRetryCount: 0 } });
+
+                ApiExtensionInstallerDocker.prototype.log.call(this, name, fd);
             }
         });
     });
@@ -270,12 +272,31 @@ ApiExtensionInstallerDocker.prototype.terminate = function(name, cb) {
     }
 }
 
+ApiExtensionInstallerDocker.prototype.log = function(name, fd) {
+    const container = docker.getContainer(name);
+    const options = {
+        follow: true,
+        stdout: true,
+        stderr: true,
+        since:  Date.now() / 1000
+    };
+
+    fd && container.logs(options, (err, stream) => {
+        if (stream && stream.statusCode == 200) {
+            const fs = require('fs');
+            let log_stream = fs.createWriteStream(undefined, {fd: fd});
+
+            container.modem.demuxStream(stream, log_stream, log_stream);
+        }
+    });
+}
+
 function _get_volume(name, destination, cb) {
     const container = docker.getContainer(name);
 
     container.inspect((err, info) => {
         let volume;
-        
+
         if (info && info.Mounts) {
             for (let i = 0; i < info.Mounts.length; i++) {
                 if (destination.includes(info.Mounts[i].Destination)) {
@@ -311,7 +332,7 @@ function _create_bind_path_and_file(config, bind_props, binds, count, cb) {
             } else {
                 config.Volumes[binds[count]] = {};
                 config.HostConfig.Binds.push(full_volume_name + ':' + binds[count]);
-                
+
                 // Check if file already exists
                 fs.open(full_name, 'r', (err, fd) => {
                     if (err) {
@@ -336,7 +357,7 @@ function _create_bind_path_and_file(config, bind_props, binds, count, cb) {
                             } else {
                                 cb && cb();
                             }
-                        });                    
+                        });
                     }
                 });
             }
@@ -387,14 +408,14 @@ function _create_container(config, cb) {
     if (!config.HostConfig) {
         config.HostConfig = {};
     }
-    
+
     // Container is created with restart policy off, this will be changed after the first start of the container
     // This prevents that the created container is started after a restart of the Docker daemon
     config.HostConfig.RestartPolicy = {
         Name: "",
         MaximumRetryCount: 0
     }
-    
+
     // Other forced settings
     config.HostConfig.NetworkMode = "host";
 
@@ -435,7 +456,7 @@ function _query_installs(cb, image_name) {
 
             if (image_name) {
                 const name = Object.keys(installs);
-                
+
                 installed[name] = installs[name];
 
                 cb && cb(err, installs[name]);
