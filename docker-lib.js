@@ -84,34 +84,36 @@ ApiExtensionInstallerDocker.prototype.get_install_options = function(image) {
 ApiExtensionInstallerDocker.prototype.install = function(image, bind_props, options, cb) {
     if (docker_version && image && image.tags[docker_version.Arch]) {
         const repo_tag_string = image.repo + ':' + image.tags[docker_version.Arch];
+        let config = {};
 
-        if (!image.config) {
-            image.config = {};
+        if (image.config) {
+            // Create config copy via json stringify/parse sequence
+            config = JSON.parse(JSON.stringify(image.config))
         }
 
         // Process options
         if (options) {
             if (options.env) {
-                if (!image.config.Env) {
-                    image.config.Env = [];
+                if (!config.Env) {
+                    config.Env = [];
                 }
 
                 for (const name in options.env) {
-                    image.config.Env.push(name + '=' + options.env[name]);
+                    config.Env.push(name + '=' + options.env[name]);
                 }
             }
 
             if (options.devices) {
-                if (!image.config.HostConfig) {
-                    image.config.HostConfig = {};
+                if (!config.HostConfig) {
+                    config.HostConfig = {};
                 }
 
-                if (!image.config.HostConfig.Devices) {
-                    image.config.HostConfig.Devices = [];
+                if (!config.HostConfig.Devices) {
+                    config.HostConfig.Devices = [];
                 }
 
                 for (const host in options.devices) {
-                    image.config.HostConfig.Devices.push({
+                    config.HostConfig.Devices.push({
                         PathOnHost:        host,
                         PathInContainer:   options.devices[host],
                         CgroupPermissions: 'rwm'
@@ -119,54 +121,54 @@ ApiExtensionInstallerDocker.prototype.install = function(image, bind_props, opti
                 }
             }
             if (options.binds) {
-                if (!image.config.Volumes) {
-                    image.config.Volumes = {};
+                if (!config.Volumes) {
+                    config.Volumes = {};
                 }
-                if (!image.config.HostConfig) {
-                    image.config.HostConfig = {};
+                if (!config.HostConfig) {
+                    config.HostConfig = {};
                 }
-                if (!image.config.HostConfig.Binds) {
-                    image.config.HostConfig.Binds = [];
+                if (!config.HostConfig.Binds) {
+                    config.HostConfig.Binds = [];
                 }
 
                 for (const host in options.binds) {
-                    image.config.Volumes[options.binds[host]] = {};
-                    image.config.HostConfig.Binds.push(host + ':' + options.binds[host]);
+                    config.Volumes[options.binds[host]] = {};
+                    config.HostConfig.Binds.push(host + ':' + options.binds[host]);
                 }
             }
         }
 
         // Process binds
         if (image.binds && image.binds.length && bind_props) {
-            if (!image.config.Volumes) {
-                image.config.Volumes = {};
+            if (!config.Volumes) {
+                config.Volumes = {};
             }
-            if (!image.config.HostConfig) {
-                image.config.HostConfig = {};
+            if (!config.HostConfig) {
+                config.HostConfig = {};
             }
-            if (!image.config.HostConfig.Binds) {
-                image.config.HostConfig.Binds = [];
+            if (!config.HostConfig.Binds) {
+                config.HostConfig.Binds = [];
             }
 
             _get_volume(bind_props.name, bind_props.root, (volume) => {
                 bind_props.volume = volume;
 
-                _create_bind_path_and_file(image.config, bind_props, image.binds, image.binds.length - 1, (err) => {
+                _create_bind_path_and_file(config, bind_props, image.binds, image.binds.length - 1, (err) => {
                     if (err) {
                         cb && cb(err);
                     } else {
-                        if (volume && image.config.HostConfig.Binds.length) {
+                        if (volume && config.HostConfig.Binds.length) {
                             // Attach this container to the volume that holds the bind mount
-                            image.config.Volumes[bind_props.root] = {};
-                            image.config.HostConfig.Binds.push(volume.name + ':' + bind_props.root + ':ro');
+                            config.Volumes[bind_props.root] = {};
+                            config.HostConfig.Binds.push(volume.name + ':' + bind_props.root + ':ro');
                         }
 
-                        _install(repo_tag_string, image.config, cb);
+                        _install(repo_tag_string, config, cb);
                     }
                 });
             });
         } else {
-            _install(repo_tag_string, image.config, cb);
+            _install(repo_tag_string, config, cb);
         }
     } else {
         cb && cb('No image available for "' + docker_version.Arch + '" architecture');
