@@ -343,10 +343,14 @@ function _create_bind_path_and_file(config, bind_props, binds, count, cb) {
                             fs.writeFile(full_name, '', (err) => {
                                 if (err) {
                                     cb && cb(err);
-                                } else if (count) {
-                                    _create_bind_path_and_file(config, bind_props, binds, count - 1, cb);
                                 } else {
-                                    cb && cb();
+                                    fs.chmodSync(full_name, 0o666);
+
+                                    if (count) {
+                                        _create_bind_path_and_file(config, bind_props, binds, count - 1, cb);
+                                    } else {
+                                        cb && cb();
+                                    }
                                 }
                             });
                         } else {
